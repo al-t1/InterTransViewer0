@@ -142,9 +142,17 @@ ExperimentsPerDEG <- function(sgnf_profiles){
   return(DEG_calls_per_gene)
 }
 
+NeverDEG <- function(all_genes = rownames(Profiles[[condition]]),
+                     jointDEGs = rownames(Signifs[[condition]])){
+  neverDEGs <- setdiff(all_genes, jointDEGs)
+  return(neverDEGs)
+}
+  
+
+
 DE_clustering <- function(profiles, FDR_cutoff, threshold = 0, 
                           iter = 500,method = 'ward.D2',
-                          change_names_to = NULL){
+                          change_names_to = NULL, insignif_to_zero = FALSE){
   rownames(profiles) <- profiles[,1]
   profiles <- na.omit(profiles)
   profiles[profiles == 'Inf'] = NA
@@ -154,6 +162,11 @@ DE_clustering <- function(profiles, FDR_cutoff, threshold = 0,
   df_p <- profiles[, p_val_cols]
   sum_sign = apply(df_p,MAR=1,FUN=function(x){sum(x<FDR_cutoff,na.rm=T)})
   apriori_list=rownames(profiles[which(sum_sign >= threshold),])
+  if (insignif_to_zero){
+    for (j in p_val_cols){
+      profiles[(profiles[,j]>=FDR_cutoff), c(j-1)] = 0
+    }
+  }
   fc_col <- seq(1,ncol(profiles), 2)
   df <- profiles[rownames(profiles)%in%apriori_list,fc_col]
   if (!(is.null(change_names_to))){
@@ -374,7 +387,6 @@ RmetricPlot <- function(TotalSpecRatio, width=8,height=6){
   mtext((c(nrow(TotalSpecRatio):1)), side=2, line=.25, at = b,las=2)
   dev.off()
 }
-bootstrap_results <- Bootstraps[['Auxin_9']]
 
 getCI <- function(bootstrap_results, condition = condition, m = (length(bootstrap_results)+1),
                   left_quantile = 0.025,right_quantile = 0.975){
@@ -447,7 +459,6 @@ Signifs[[condition]]$ID <- rownames(Signifs[[condition]])
 Melts[[condition]] <- melt(Signifs[[condition]],na.rm = T,id.vars = 'ID',
                      variable.name = 'exp',value.name = 'logFC')
 
-
 #Specific/total ratio calculation.
 TotalSpecRatio <- DE_summary(melted_table = Melts[[condition]])[[1]]
 TotalSpecRatio_list[[condition]] <- TotalSpecRatio
@@ -473,7 +484,7 @@ Descr$Name_Clust <- paste(Descr$Order,Descr$Method,Descr$Organ,
                           Descr$Specific_DEGs,sep='\n')
 Descriptions[[condition]] <- Descr
 
-#Technical step. 
+#Technical step: table to list. 
 DEG_list <- GetDEGLists(Melts[[condition]])
 names(DEG_list) <- Descriptions[[condition]]$Study
 DEG_lists[[condition]] <- DEG_list
@@ -506,7 +517,7 @@ for (i in (0:0)){
   threshold = i
   clustering_results <- DE_clustering(Profiles[[condition]],change_names_to = Descriptions[[condition]]$Name_Clust,
                                       iter = 5,FDR_cutoff = 0.05,
-                                      threshold = threshold)
+                                      threshold = threshold, insignif_to_zero = F)
   dend <- clustering_results[[1]] #dendrogram results
   dend_labels <- clustering_results[[2]] #dendrogram labels
   bb <- clustering_results[[3]] #bclust bootstrapping results
@@ -534,7 +545,9 @@ write.table(data.frame("N"=rownames(Sim_matrixes[[condition]]),TotalSpecRatio_li
 write.table(data.frame("X"=paste0('X',rownames(Sim_matrixes[[condition]])),Sim_matrixes[[condition]]),
             paste0('Results/SimMatrix_',condition,'.csv'),
             quote = F,row.names = F,sep=';')
-
+write.table(data.frame("ID" = rownames(exp_number_per_DEG),exp_number_per_DEG),
+            paste0('Results/JointDEGs_',condition,'.csv'),
+            quote = F,row.names = F,sep=';')
 
 
 #______________________________________________________________
@@ -606,7 +619,7 @@ for (i in (0:0)){
   clustering_results <- DE_clustering(Profiles[[condition]],
                                       change_names_to = Descriptions[[condition]]$Name_Clust,
                                       iter = 5,FDR_cutoff = 0.05,
-                                      threshold = threshold)
+                                      threshold = threshold,insignif_to_zero = F)
   dend <- clustering_results[[1]] #dendrogram results
   dend_labels <- clustering_results[[2]] #dendrogram labels
   bb <- clustering_results[[3]] #bclust bootstrapping results
@@ -635,16 +648,18 @@ write.table(data.frame("N"=rownames(Sim_matrixes[[condition]]),TotalSpecRatio_li
 write.table(data.frame("X"=paste0('X',rownames(Sim_matrixes[[condition]])),Sim_matrixes[[condition]]),
             paste0('Results/SimMatrix_',condition,'.csv'),
             quote = F,row.names = F,sep=';')
-
+write.table(data.frame("ID" = rownames(exp_number_per_DEG),exp_number_per_DEG),
+            paste0('Results/JointDEGs_',condition,'.csv'),
+            quote = F,row.names = F,sep=';')
 
 #___________________Bootstrap______________________
 #___________________#########______________________
 
-
 #The bootstrap procedure is used to evaluate the homogeneity of the transcriptome sets. 
 #Testing all possible combinations Aux23vsAux22, Aux23vsAux21... etc.
-#The procedure is time consuming. 5000 iterations takes ~1 hour for all 4 analyses.
-iters = 100
+#The procedure is extremely time consuming. 
+#5000 iterations takes ~1 hour for all 4 analyses.
+iters = 1000 # or 5000
 condition = 'Auxin'
 Bootstraps[[condition]] <- DE_bootstrap(melted_table1 = Melts[[condition]],iters = iters)
 saveRDS(Bootstraps,paste0('Results/Bootstrap_results.rds'))
@@ -737,9 +752,12 @@ ggsave(filename = paste0('Results/CI_hist.tiff'),
 # because of the biological difference between two phytohormone treatments. 
 iters = 1000
 BS_res <- data.frame(matrix(ncol=0,nrow=iters))
+
+sizes2 = 16
 BS_res$Aux23vsAux16 <- DE_bootstrap(melted_table1 = Melts[['Auxin']],
                                      melted_table2 = Melts[['Auxin']],
                                      size1 = 23, sizes2 = c(16),iters = iters)[[sizes2]]
+sizes2 = 16
 BS_res$Aux16vsEt16 <- DE_bootstrap(melted_table1 = Melts[['Auxin']],
                                      melted_table2 = Melts[['Ethylene']],
                                      size1 = 16, sizes2 = c(16),iters = iters)[[sizes2]]
